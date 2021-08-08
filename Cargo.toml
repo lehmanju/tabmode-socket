@@ -1,5 +1,5 @@
 [package]
-name = "gnome-tablet-mode-switch"
+name = "tabmodesw"
 version = "0.1.0"
 edition = "2018"
 
