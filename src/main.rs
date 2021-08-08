@@ -1,12 +1,17 @@
+use dbus::blocking::Connection;
+use dbus_crossroads::Crossroads;
+use evdev::uinput::VirtualDevice;
 use evdev::AttributeSet;
 use evdev::SwitchType;
 use evdev::{uinput::VirtualDeviceBuilder, EventType, InputEvent};
-use std::fs;
-use std::io::ErrorKind;
-use std::io::Read;
-use std::os::unix::net::UnixListener;
+use std::process;
 
-fn main() -> std::io::Result<()> {
+struct State {
+    device: VirtualDevice,
+    state: bool,
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut switches = AttributeSet::<SwitchType>::new();
     switches.insert(SwitchType::SW_TABLET_MODE);
 
@@ -22,43 +27,47 @@ fn main() -> std::io::Result<()> {
         0,
     )])?;
 
-    let file_result = fs::remove_file("/tmp/tabmodesw.sock");
-    if let Err(err) = file_result {
-        if err.kind() != ErrorKind::NotFound {
-            return Err(err);
-        }
-    }
-    let listener = UnixListener::bind("/tmp/tabmodesw.sock")?;
-    for conn in listener.incoming() {
-        match conn {
-            Ok(mut stream) => {
-                let mut b = [0; 1];
-                stream.read(&mut b)?;
-                println!("Result {:?}", b);
-                if b[0] == 50u8 {
-                    break;
-                }
-                if b[0] == 48u8 {
-                    //"0"
-                    //tablet mode disable
-                    println!("Disable tab mode");
-                    device.emit(&[InputEvent::new(
-                        EventType::SWITCH,
-                        SwitchType::SW_TABLET_MODE.0,
-                        0,
-                    )])?;
-                } else {
-                    //tablet mode enable
-                    println!("Enable tab mode");
-                    device.emit(&[InputEvent::new(
-                        EventType::SWITCH,
-                        SwitchType::SW_TABLET_MODE.0,
-                        1,
-                    )])?;
-                }
-            }
-            Err(err) => return Err(err),
-        }
-    }
-    Ok(())
+    // Use dbus
+    let c = Connection::new_session()?;
+    c.request_name("de.devpi.tabmodesw", false, true, false)?;
+    let mut cr = Crossroads::new();
+    let token = cr.register("de.devpi.tabmodesw", |b| {
+        b.method("Enable", (), (), |_, state: &mut State, _: ()| {
+            println!("Enable tab mode");
+            state.state = true;
+            state.device.emit(&[InputEvent::new(
+                EventType::SWITCH,
+                SwitchType::SW_TABLET_MODE.0,
+                1,
+            )]);
+            Ok(())
+        });
+        b.method("Disable", (), (), |_, state: &mut State, _: ()| {
+            println!("Disable tab mode");
+            state.state = false;
+            state.device.emit(&[InputEvent::new(
+                EventType::SWITCH,
+                SwitchType::SW_TABLET_MODE.0,
+                0,
+            )]);
+            Ok(())
+        });
+        b.method("State", (), ("state",), |_, state: &mut State, _: ()| {
+            Ok((state.state,))
+        });
+        b.method("Pid", (), ("pid",), |_, _: &mut State, _: ()| {
+            Ok((process::id(),))
+        });
+    });
+
+    cr.insert(
+        "/",
+        &[token],
+        State {
+            device,
+            state: false,
+        },
+    );
+    cr.serve(&c)?;
+    unreachable!()
 }

@@ -7,4 +7,5 @@ edition = "2018"
 
 [dependencies]
 evdev = { git = "https://github.com/lehmanju/evdev.git" }
-
+dbus = "0.9"
+dbus-crossroads = "0.4"
